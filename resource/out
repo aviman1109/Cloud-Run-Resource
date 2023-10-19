@@ -1,0 +1,50 @@
+#!/bin/bash
+PATH=/usr/local/bin:$PATH
+. $( dirname "$0" )/common.sh
+
+repipe
+load_source
+in_dir="$1"
+
+eval $( jq -r '{
+  "params_image": .params.image,
+  "params_version": .params.version,
+  "params_max_instances": .params.max_instances,
+  "params_concurrency": .params.concurrency,
+  "params_memory": .params.memory,
+  "params_timeout": .params.timeout,
+  "params_environment": .params.environment
+} | to_entries[] | .key + "=" + @sh "\(.value)"' < /tmp/stdin )
+
+
+# setup environment
+echo "${source_gcp_json_key}" > /service-account.json
+
+gcloud auth activate-service-account --key-file=/service-account.json
+
+gcloud run deploy "${source_service_name}" \
+  --image "${params_image}:${params_version}" \
+  --project "${source_project}" \
+  --max-instances "${params_max_instances}" \
+  --concurrency "${params_concurrency}" \
+  --memory "${params_memory}" \
+  --timeout "${params_timeout}" \
+  --platform "${source_platform}" \
+  --region "${source_region}" \
+  --set-env-vars APP_ENV="${params_environment}"
+
+gcloud run services --platform "${source_platform}" --region "${source_region}" update-traffic "${source_service_name}" --to-latest
+
+statuses=$(gcloud run services describe ${source_service_name} --region=${source_region} --project=${source_project} --platform=${source_platform} --format=json \
+  | jq -c \
+  '.| {
+    "version": { "ref": ( .spec.template.metadata.annotations."client.knative.dev/user-image" ) },
+    "metadata": [
+        { "name": "name", "value": ( .metadata.name ) },
+        { "name": "image-tag", "value": ( .spec.template.metadata.annotations."client.knative.dev/user-image" ) },
+        { "name": "image-sha", "value": ( .metadata.annotations."client.knative.dev/user-image" ) },
+        { "name": "address", "value": ( .status.address.url ) }
+    ]
+  }')
+
+echo ${statuses} >&3

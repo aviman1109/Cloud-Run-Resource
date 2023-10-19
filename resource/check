@@ -1,0 +1,20 @@
+#!/bin/bash
+PATH=/usr/local/bin:$PATH
+. $( dirname "$0" )/common.sh
+
+repipe
+load_source
+
+# setup environment
+echo "${source_gcp_json_key}" > /service-account.json
+
+gcloud auth activate-service-account --key-file=/service-account.json
+
+statuses=$(gcloud run services describe ${source_service_name} --region=${source_region} --project=${source_project} --platform=${source_platform} --format=json \
+  | jq -c \
+  '.| {
+    "ref": ( .spec.template.metadata.annotations."client.knative.dev/user-image" )
+  }')
+
+result=$(jq -n '[inputs]' <<< "${statuses}")
+echo ${result} >&3
